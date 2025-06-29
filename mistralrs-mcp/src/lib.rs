@@ -167,6 +167,14 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum McpServerSource {
+    /// Streamable HTTP-based MCP server using rmcp client
+    ///
+    /// Best for: MCP servers supporting streamable HTTP endpoint with JSON-RPC framing.
+    /// Features: Fully compatible with rmcp client, long-lived streaming, server-sent events.
+    StreamableHttp {
+        /// Base URL of the MCP server (http:// or https://)
+        url: String,
+    },
     /// HTTP-based MCP server using JSON-RPC over HTTP
     ///
     /// Best for: Public APIs, RESTful services, servers behind load balancers
@@ -297,6 +305,9 @@ pub struct McpToolInfo {
     pub server_id: String,
     /// Display name of the server for logging and debugging
     pub server_name: String,
+
+    /// Optional annotations attached to the tool
+    pub annotations: Option<serde_json::Value>,
 }
 
 impl Default for McpClientConfig {
