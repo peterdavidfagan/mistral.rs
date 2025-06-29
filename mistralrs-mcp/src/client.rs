@@ -1,4 +1,11 @@
-use crate::tools::{Function, Tool, ToolCallback, ToolCallbackWithTool, ToolType};
+use rmcp::{
+    ServiceExt,
+    model::{CallToolRequestParam, ClientCapabilities, ClientInfo, Implementation, Tool as McpSdkTool},
+    transport::{StreamableHttpClientTransport, SseClientTransport},
+};
+use rmcp::transport::common::client_side_sse::ExponentialBackoff;
+
+use crate::tools::{Function, Tool as LocalTool, ToolCallback, ToolCallbackWithTool, ToolType};
 use crate::transport::{HttpTransport, McpTransport, ProcessTransport, WebSocketTransport};
 use crate::types::McpToolResult;
 use crate::{McpClientConfig, McpServerConfig, McpServerSource, McpToolInfo};
@@ -33,6 +40,38 @@ pub trait McpServerConnection: Send + Sync {
 
     /// Check if the connection is healthy
     async fn ping(&self) -> Result<()>;
+}
+
+/// Converts an McpToolInfo to an internal Tool definition.
+fn tool_from_mcp(info: &McpToolInfo) -> LocalTool {
+    // Convert input_schema (serde_json::Value) to Option<HashMap<String, Value>>
+    let parameters = if let serde_json::Value::Object(ref obj) = info.input_schema {
+        // Try "properties" first, fallback to flat object
+        if let Some(serde_json::Value::Object(props)) = obj.get("properties") {
+            Some(props.clone())
+        } else {
+            Some(obj.clone())
+        }
+    } else {
+        None
+    };
+
+    LocalTool {
+        tp: ToolType::Function,
+        function: Function {
+            name: info.name.clone(),
+            description: info.description.clone(),
+            parameters: if let serde_json::Value::Object(ref obj) = info.input_schema {
+                if let Some(serde_json::Value::Object(props)) = obj.get("properties") {
+                    Some(props.clone().into_iter().collect())
+                } else {
+                    Some(obj.clone().into_iter().collect())
+                }
+            } else {
+                None
+            },
+        },
+    }
 }
 
 /// MCP client that manages connections to multiple MCP servers
@@ -134,6 +173,43 @@ impl McpClient {
         config: &McpServerConfig,
     ) -> Result<Arc<dyn McpServerConnection>> {
         match &config.source {
+            McpServerSource::StreamableHttp {
+                uri,
+                max_times,
+                base_duration,
+                channel_buffer_capacity,
+                allow_stateless,
+            } => {
+                let connection = StreamableHttpMcpConnection::new(
+                    config.id.clone(),
+                    config.name.clone(),
+                    uri.clone(),
+                    *max_times,
+                    *base_duration,
+                    *channel_buffer_capacity,
+                    *allow_stateless,
+                ).await?;
+                Ok(Arc::new(connection))
+            }
+            McpServerSource::Sse {
+                uri,
+                max_times,
+                base_duration,
+                use_message_endpoint,
+            } => {
+                let connection = SseMcpConnection::new(
+                    config.id.clone(),
+                    config.name.clone(),
+                    uri.clone(),
+                    *max_times,
+                    *base_duration,
+                    use_message_endpoint.clone(),
+                ).await?;
+                Ok(Arc::new(connection))
+            }
+            _ => {
+                anyhow::bail!("Unsupported MCP server source or legacy code not ported")
+            }
             McpServerSource::Http {
                 url,
                 timeout_secs,
@@ -256,17 +332,9 @@ impl McpClient {
                     .map_err(|_| anyhow::anyhow!("Tool call thread panicked"))?
                 });
 
-                // Convert MCP tool schema to Tool definition
-                let function_def = Function {
-                    name: tool_name.clone(),
-                    description: tool.description.clone(),
-                    parameters: Self::convert_mcp_schema_to_parameters(&tool.input_schema),
-                };
-
-                let tool_def = Tool {
-                    tp: ToolType::Function,
-                    function: function_def,
-                };
+                let mut tool_info = tool.clone();
+                tool_info.name = tool_name.clone(); // Update name with prefix if present
+                let tool_def = tool_from_mcp(&tool_info);
 
                 // Store in both collections for backward compatibility
                 self.tool_callbacks
@@ -319,6 +387,196 @@ impl McpClient {
                 None
             }
         }
+    }
+}
+
+
+/// Streamable HTTP MCP server connection using rmcp SDK
+pub struct StreamableHttpMcpConnection {
+    client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
+    server_id: String,
+    server_name: String,
+}
+
+impl StreamableHttpMcpConnection {
+    pub async fn new(
+        server_id: String, 
+        server_name: String, 
+        uri: String,
+        max_times: Option<usize>,
+        base_duration: Option<Duration>,
+        channel_buffer_capacity: Option<usize>,
+        allow_stateless: Option<bool>,
+    ) -> Result<Self> {
+        let retry_policy = ExponentialBackoff {
+            max_times: Some(max_times.unwrap_or(3)),
+            base_duration: base_duration.unwrap_or_else(|| Duration::from_millis(100)),
+        };
+        let config = rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig {
+            uri: Arc::<str>::from(uri.as_str()),
+            retry_config: Arc::new(retry_policy),
+            channel_buffer_capacity: channel_buffer_capacity.unwrap_or(100),
+            allow_stateless: allow_stateless.unwrap_or(true),
+        };
+        let transport = StreamableHttpClientTransport::with_client(reqwest::Client::default(), config);
+        let client_info = ClientInfo {
+            protocol_version: Default::default(),
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: server_name.clone(),
+                version: "0.0.1".to_string(),
+            },
+        };
+        let client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>> = Arc::new(client_info.serve(transport).await?);
+
+        Ok(Self {
+            client,
+            server_id,
+            server_name,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl McpServerConnection for StreamableHttpMcpConnection {
+    fn server_id(&self) -> &str {
+        &self.server_id
+    }
+    fn server_name(&self) -> &str {
+        &self.server_name
+    }
+    async fn list_tools(&self) -> Result<Vec<McpToolInfo>> {
+        let result = self.client.list_tools(Default::default()).await?;
+        let tools: Vec<McpSdkTool> = result.tools;
+        Ok(tools
+            .into_iter()
+           .map(|t| McpToolInfo {
+                name: t.name.to_string(),
+                description: t.description.as_ref().map(|c| c.to_string()),
+                input_schema: serde_json::Value::Object((*t.input_schema).clone()),
+                server_id: self.server_id.clone(),
+                server_name: self.server_name.clone(),
+                annotations: t.annotations.as_ref().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),            })
+            .collect())
+    }
+    async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
+        let result = self
+            .client
+            .call_tool(CallToolRequestParam {
+                name: name.to_string().into(),
+                arguments: arguments.as_object().cloned(),
+            })
+            .await?;
+        Ok(format!("{result:?}"))
+    }
+    async fn list_resources(&self) -> Result<Vec<Resource>> {
+        Ok(vec![])
+    }
+    async fn read_resource(&self, _uri: &str) -> Result<String> {
+        Ok(String::new())
+    }
+    async fn ping(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// SSE MCP server connection using rmcp SDK
+pub struct SseMcpConnection {
+    client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
+    server_id: String,
+    server_name: String,
+}
+
+impl SseMcpConnection {
+    /// Create a new SSE MCP connection.
+    ///
+    /// The configuration options max_times, base_duration, and use_message_endpoint are parsed and
+    /// logged for future enhanced SSE support.
+    pub async fn new(
+        server_id: String,
+        server_name: String,
+        uri: String,
+        max_times: Option<usize>,
+        base_duration: Option<std::time::Duration>,
+        use_message_endpoint: Option<String>,
+    ) -> Result<Self> {
+        tracing::info!(
+            ?max_times,
+            ?base_duration,
+            ?use_message_endpoint,
+            "SSE connection configuration"
+        );
+        let retry_policy = ExponentialBackoff {
+            max_times: Some(max_times.unwrap_or(3)),
+            base_duration: base_duration.unwrap_or_else(|| Duration::from_millis(100)),
+        };
+        let config = rmcp::transport::sse_client::SseClientConfig {
+            sse_endpoint: Arc::<str>::from(uri.as_str()),
+            retry_policy: Arc::new(retry_policy),
+            use_message_endpoint: use_message_endpoint
+        };
+        // TODO: Integrate max_times, base_duration, and use_message_endpoint into SSE transport when supported.
+        let transport = rmcp::transport::SseClientTransport::start_with_client(reqwest::Client::default(), config).await?;
+        let client_info = ClientInfo {
+            protocol_version: Default::default(),
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: server_name.clone(),
+                version: "0.0.1".to_string(),
+            },
+        };
+        let client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>> =
+            Arc::new(client_info.serve(transport).await?);
+
+        Ok(Self {
+            client,
+            server_id,
+            server_name,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl McpServerConnection for SseMcpConnection {
+    fn server_id(&self) -> &str {
+        &self.server_id
+    }
+    fn server_name(&self) -> &str {
+        &self.server_name
+    }
+    async fn list_tools(&self) -> Result<Vec<McpToolInfo>> {
+        let result = self.client.list_tools(Default::default()).await?;
+        let tools: Vec<McpSdkTool> = result.tools;
+        Ok(tools
+            .into_iter()
+            .map(|t| McpToolInfo {
+                name: t.name.to_string(),
+                description: t.description.as_ref().map(|c| c.to_string()),
+                input_schema: serde_json::Value::Object((*t.input_schema).clone()),
+                server_id: self.server_id.clone(),
+                server_name: self.server_name.clone(),
+                annotations: t.annotations.as_ref().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
+            })
+            .collect())
+    }
+    async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
+        let result = self
+            .client
+            .call_tool(CallToolRequestParam {
+                name: name.to_string().into(),
+                arguments: arguments.as_object().cloned(),
+            })
+            .await?;
+        Ok(format!("{result:?}"))
+    }
+    async fn list_resources(&self) -> Result<Vec<Resource>> {
+        Ok(vec![])
+    }
+    async fn read_resource(&self, _uri: &str) -> Result<String> {
+        Ok(String::new())
+    }
+    async fn ping(&self) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -415,6 +673,7 @@ impl McpServerConnection for HttpMcpConnection {
                 input_schema,
                 server_id: self.server_id.clone(),
                 server_name: self.server_name.clone(),
+                annotations: None, // Annotations not supported in this implementation
             });
         }
 
@@ -583,6 +842,7 @@ impl McpServerConnection for ProcessMcpConnection {
                 input_schema,
                 server_id: self.server_id.clone(),
                 server_name: self.server_name.clone(),
+                annotations: None, // Annotations not supported in this implementation
             });
         }
 
@@ -750,6 +1010,7 @@ impl McpServerConnection for WebSocketMcpConnection {
                 input_schema,
                 server_id: self.server_id.clone(),
                 server_name: self.server_name.clone(),
+                annotations: None, // Annotations not supported in this implementation
             });
         }
 
