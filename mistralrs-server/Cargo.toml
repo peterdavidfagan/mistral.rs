@@ -31,6 +31,15 @@ tokio.workspace = true
 tracing.workspace = true
 rust-mcp-sdk.workspace = true
 async-trait.workspace = true
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", features = [
+    "client",
+    "server",
+    "transport-sse-server",
+    "transport-io",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client",
+    "auth",
+]  }
 
 [features]
 cuda = ["mistralrs-core/cuda", "mistralrs-server-core/cuda"]

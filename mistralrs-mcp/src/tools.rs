@@ -1,3 +1,4 @@
+use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,7 +23,7 @@ pub type ToolCallbacksWithTools = HashMap<String, ToolCallbackWithTool>;
 
 /// Type of tool
 #[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 pub enum ToolType {
     #[serde(rename = "function")]
     Function,

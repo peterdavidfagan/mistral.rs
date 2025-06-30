@@ -37,6 +37,17 @@ utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 accelerate-src = { workspace = true, optional = true }
 intel-mkl-src = { workspace = true, optional = true }
 
+rmcp = { git = "https://github.com/modelcontextprotocol/rust-sdk", features = [
+    "client",
+    "server",
+    "transport-sse-server",
+    "transport-io",
+    "transport-streamable-http-server",
+    "transport-streamable-http-client",
+    "auth",
+    "schemars"
+]  }
+
 [features]
 cuda = ["mistralrs-core/cuda"]
 cudnn = ["mistralrs-core/cudnn"]

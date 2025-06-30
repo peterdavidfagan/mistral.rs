@@ -1,140 +1,60 @@
 //! ## OpenAI compatible functionality.
 
+use utoipa::ToSchema;
+use rmcp::schemars;
+
 use std::{collections::HashMap, ops::Deref};
 
-use either::Either;
 use mistralrs_core::{
     ImageGenerationResponseFormat, LlguidanceGrammar, Tool, ToolChoice, ToolType, WebSearchOptions,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{
     openapi::{schema::SchemaType, ArrayBuilder, ObjectBuilder, OneOfBuilder, RefOr, Schema, Type},
-    PartialSchema, ToSchema,
+    PartialSchema,
 };
 
 /// Inner content structure for messages that can be either a string or key-value pairs
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MessageInnerContent(
-    #[serde(with = "either::serde_untagged")] pub Either<String, HashMap<String, String>>,
-);
-
-// The impl Deref was preventing the Derive ToSchema and #[schema] macros from
-// properly working, so manually impl ToSchema
-impl PartialSchema for MessageInnerContent {
-    fn schema() -> RefOr<Schema> {
-        RefOr::T(message_inner_content_schema())
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, ToSchema)]
+#[serde(untagged)]
+pub enum MessageInnerContentField {
+    Text(String),
+    Map(HashMap<String, String>),
 }
 
-impl ToSchema for MessageInnerContent {
-    fn schemas(
-        schemas: &mut Vec<(
-            String,
-            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
-        )>,
-    ) {
-        schemas.push((
-            MessageInnerContent::name().into(),
-            MessageInnerContent::schema(),
-        ));
-    }
-}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, ToSchema)]
+pub struct MessageInnerContent(pub MessageInnerContentField);
 
 impl Deref for MessageInnerContent {
-    type Target = Either<String, HashMap<String, String>>;
+    type Target = MessageInnerContentField;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
-}
-
-/// Function for MessageInnerContent Schema generation to handle `Either`
-fn message_inner_content_schema() -> Schema {
-    Schema::OneOf(
-        OneOfBuilder::new()
-            // Either::Left - simple string
-            .item(Schema::Object(
-                ObjectBuilder::new()
-                    .schema_type(SchemaType::Type(Type::String))
-                    .build(),
-            ))
-            // Either::Right - object with string values
-            .item(Schema::Object(
-                ObjectBuilder::new()
-                    .schema_type(SchemaType::Type(Type::Object))
-                    .additional_properties(Some(RefOr::T(Schema::Object(
-                        ObjectBuilder::new()
-                            .schema_type(SchemaType::Type(Type::String))
-                            .build(),
-                    ))))
-                    .build(),
-            ))
-            .build(),
-    )
 }
 
 /// Message content that can be either simple text or complex structured content
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MessageContent(
-    #[serde(with = "either::serde_untagged")]
-    Either<String, Vec<HashMap<String, MessageInnerContent>>>,
-);
-
-// The impl Deref was preventing the Derive ToSchema and #[schema] macros from
-// properly working, so manually impl ToSchema
-impl PartialSchema for MessageContent {
-    fn schema() -> RefOr<Schema> {
-        RefOr::T(message_content_schema())
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, ToSchema)]
+#[serde(untagged)]
+pub enum MessageContentField {
+    Text(String),
+    Structured(Vec<HashMap<String, MessageInnerContentField>>),
 }
 
-impl ToSchema for MessageContent {
-    fn schemas(
-        schemas: &mut Vec<(
-            String,
-            utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
-        )>,
-    ) {
-        schemas.push((MessageContent::name().into(), MessageContent::schema()));
-    }
-}
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, ToSchema)]
+pub struct MessageContent(pub MessageContentField);
 
 impl Deref for MessageContent {
-    type Target = Either<String, Vec<HashMap<String, MessageInnerContent>>>;
+    type Target = MessageContentField;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
-}
-
-/// Function for MessageContent Schema generation to handle `Either`
-fn message_content_schema() -> Schema {
-    Schema::OneOf(
-        OneOfBuilder::new()
-            .item(Schema::Object(
-                ObjectBuilder::new()
-                    .schema_type(SchemaType::Type(Type::String))
-                    .build(),
-            ))
-            .item(Schema::Array(
-                ArrayBuilder::new()
-                    .items(RefOr::T(Schema::Object(
-                        ObjectBuilder::new()
-                            .schema_type(SchemaType::Type(Type::Object))
-                            .additional_properties(Some(RefOr::Ref(
-                                utoipa::openapi::Ref::from_schema_name("MessageInnerContent"),
-                            )))
-                            .build(),
-                    )))
-                    .build(),
-            ))
-            .build(),
-    )
 }
 
 /// Represents a function call made by the assistant
 ///
 /// When using tool calling, this structure contains the details of a function
 /// that the model has decided to call, including the function name and its parameters.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema, schemars::JsonSchema)]
 pub struct FunctionCalled {
     /// The name of the function to call
     pub name: String,
@@ -146,7 +66,7 @@ pub struct FunctionCalled {
 /// Represents a tool call made by the assistant
 ///
 /// This structure wraps a function call with its type information.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, ToSchema, schemars::JsonSchema)]
 pub struct ToolCall {
     /// The type of tool being called
     #[serde(rename = "type")]
@@ -179,7 +99,7 @@ pub struct ToolCall {
 ///     tool_calls: None,
 /// };
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct Message {
     /// The message content
     pub content: Option<MessageContent>,
@@ -194,7 +114,7 @@ pub struct Message {
 ///
 /// Defines when the model should stop generating text, either with a single
 /// stop token or multiple possible stop sequences.
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum StopTokens {
     ///  Multiple possible stop sequences
@@ -265,7 +185,7 @@ fn default_response_format() -> ImageGenerationResponseFormat {
 ///     %import common.NUMBER
 /// "#.to_string());
 /// ```
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum Grammar {
     /// Regular expression grammar
@@ -275,6 +195,7 @@ pub enum Grammar {
     #[serde(rename = "json_schema")]
     JsonSchema(serde_json::Value),
     /// LLGuidance grammar
+    #[schemars(skip)]
     #[serde(rename = "llguidance")]
     Llguidance(LlguidanceGrammar),
     /// Lark parser grammar
@@ -420,14 +341,14 @@ fn llguidance_schema() -> Schema {
 }
 
 /// JSON Schema for structured responses
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct JsonSchemaResponseFormat {
     pub name: String,
     pub schema: serde_json::Value,
 }
 
 /// Response format for model output
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 #[serde(tag = "type")]
 pub enum ResponseFormat {
     /// Free-form text response
@@ -440,15 +361,23 @@ pub enum ResponseFormat {
     },
 }
 
+/// Messages field for ChatCompletionRequest: can be a Vec<Message> or a String prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, ToSchema)]
+#[serde(untagged)]
+pub enum MessagesField {
+    Messages(Vec<Message>),
+    Prompt(String),
+}
+
 /// Chat completion request following OpenAI's specification
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatCompletionRequest {
     #[schema(
         schema_with = messages_schema,
-        example = json!(vec![Message{content:Some(MessageContent{0: either::Left(("Why did the crab cross the road?".to_string()))}), role:"user".to_string(), name: None, tool_calls: None}])
+        example = json!(vec![Message{content:Some(MessageContent(MessageContentField::Text("Why did the crab cross the road?".to_string()))), role:"user".to_string(), name: None, tool_calls: None}])
     )]
-    #[serde(with = "either::serde_untagged")]
-    pub messages: Either<Vec<Message>, String>,
+    pub messages: MessagesField,
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
     pub model: String,
@@ -479,12 +408,15 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[schema(example = true)]
     pub stream: Option<bool>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<Vec<Tool>>))]
     pub tools: Option<Vec<Tool>>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<ToolChoice>))]
     pub tool_choice: Option<ToolChoice>,
     #[schema(example = json!(Option::None::<ResponseFormat>))]
     pub response_format: Option<ResponseFormat>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<WebSearchOptions>))]
     pub web_search_options: Option<WebSearchOptions>,
 
@@ -507,7 +439,7 @@ pub struct ChatCompletionRequest {
     pub enable_thinking: Option<bool>,
 }
 
-/// Function for ChatCompletionRequest.messages Schema generation to handle `Either`
+/// Function for ChatCompletionRequest.messages Schema generation to handle MessagesField
 fn messages_schema() -> Schema {
     Schema::OneOf(
         OneOfBuilder::new()
@@ -528,7 +460,7 @@ fn messages_schema() -> Schema {
 }
 
 /// Model information metadata about an available mode
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct ModelObject {
     pub id: String,
     pub object: &'static str,
@@ -546,14 +478,14 @@ pub struct ModelObject {
 }
 
 /// Collection of available models
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct ModelObjects {
     pub object: &'static str,
     pub data: Vec<ModelObject>,
 }
 
 /// Legacy OpenAI compatible text completion request
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct CompletionRequest {
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
@@ -593,14 +525,17 @@ pub struct CompletionRequest {
     pub suffix: Option<String>,
     #[serde(rename = "user")]
     pub _user: Option<String>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<Vec<Tool>>))]
     pub tools: Option<Vec<Tool>>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<ToolChoice>))]
     pub tool_choice: Option<ToolChoice>,
 
     // mistral.rs additional
     #[schema(example = json!(Option::None::<usize>))]
     pub top_k: Option<usize>,
+    #[schemars(skip)]
     #[schema(example = json!(Option::None::<Grammar>))]
     pub grammar: Option<Grammar>,
     #[schema(example = json!(Option::None::<f64>))]
@@ -616,7 +551,7 @@ pub struct CompletionRequest {
 }
 
 /// Image generation request
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct ImageGenerationRequest {
     #[schema(example = "mistral")]
     #[serde(default = "default_model")]
@@ -627,6 +562,7 @@ pub struct ImageGenerationRequest {
     #[serde(default = "default_1usize")]
     #[schema(example = 1)]
     pub n_choices: usize,
+    #[schemars(skip)]
     #[serde(default = "default_response_format")]
     pub response_format: ImageGenerationResponseFormat,
     #[serde(default = "default_720usize")]
@@ -638,7 +574,7 @@ pub struct ImageGenerationRequest {
 }
 
 /// Audio format options for speech generation responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioResponseFormat {
     /// Widely compatible, lossy compression, good for web streaming
@@ -678,7 +614,7 @@ impl AudioResponseFormat {
 }
 
 /// Speech generation request
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct SpeechGenerationRequest {
     /// The TTS model to use for audio generation.
     #[schema(example = "nari-labs/Dia-1.6B")]
