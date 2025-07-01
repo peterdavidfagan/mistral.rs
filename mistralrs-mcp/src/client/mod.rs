@@ -1,8 +1,8 @@
 pub mod http;
 pub mod process;
-pub mod websocket;
-pub mod streamable_http;
 pub mod sse;
+pub mod streamable_http;
+pub mod websocket;
 
 use crate::tools::{Function, Tool as LocalTool, ToolCallback, ToolCallbackWithTool, ToolType};
 use crate::{McpClientConfig, McpServerConfig, McpServerSource, McpToolInfo};
@@ -119,7 +119,8 @@ impl McpClient {
                     *base_duration,
                     *channel_buffer_capacity,
                     *allow_stateless,
-                ).await?;
+                )
+                .await?;
                 Ok(Arc::new(connection))
             }
             McpServerSource::Sse {
@@ -135,7 +136,8 @@ impl McpClient {
                     *max_times,
                     *base_duration,
                     use_message_endpoint.clone(),
-                ).await?;
+                )
+                .await?;
                 Ok(Arc::new(connection))
             }
             McpServerSource::Http {
