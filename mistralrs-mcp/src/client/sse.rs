@@ -1,12 +1,15 @@
 use crate::client::McpServerConnection;
 
-use rmcp::{
-    ServiceExt,
-    model::{CallToolRequestParam, ClientCapabilities, ClientInfo, ClientRequest, Implementation, PingRequest, ReadResourceRequestParam, Tool as McpSdkTool},
-};
 use rmcp::transport::common::client_side_sse::ExponentialBackoff;
+use rmcp::{
+    model::{
+        CallToolRequestParam, ClientCapabilities, ClientInfo, ClientRequest, Implementation,
+        PingRequest, ReadResourceRequestParam, Tool as McpSdkTool,
+    },
+    ServiceExt,
+};
 
-use crate::{McpToolInfo};
+use crate::McpToolInfo;
 use anyhow::Result;
 use rust_mcp_schema::Resource;
 use serde_json::Value;
@@ -15,7 +18,8 @@ use std::time::Duration;
 
 /// SSE MCP server connection using rmcp SDK
 pub struct SseMcpConnection {
-    client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
+    client:
+        Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
     server_id: String,
     server_name: String,
 }
@@ -46,10 +50,14 @@ impl SseMcpConnection {
         let config = rmcp::transport::sse_client::SseClientConfig {
             sse_endpoint: Arc::<str>::from(uri.as_str()),
             retry_policy: Arc::new(retry_policy),
-            use_message_endpoint: use_message_endpoint
+            use_message_endpoint,
         };
         // TODO: Integrate max_times, base_duration, and use_message_endpoint into SSE transport when supported.
-        let transport = rmcp::transport::SseClientTransport::start_with_client(reqwest::Client::default(), config).await?;
+        let transport = rmcp::transport::SseClientTransport::start_with_client(
+            reqwest::Client::default(),
+            config,
+        )
+        .await?;
         let client_info = ClientInfo {
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
@@ -58,8 +66,9 @@ impl SseMcpConnection {
                 version: "0.0.1".to_string(),
             },
         };
-        let client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>> =
-            Arc::new(client_info.serve(transport).await?);
+        let client: Arc<
+            rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
+        > = Arc::new(client_info.serve(transport).await?);
 
         Ok(Self {
             client,
@@ -88,7 +97,10 @@ impl McpServerConnection for SseMcpConnection {
                 input_schema: serde_json::Value::Object((*t.input_schema).clone()),
                 server_id: self.server_id.clone(),
                 server_name: self.server_name.clone(),
-                annotations: t.annotations.as_ref().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
+                annotations: t
+                    .annotations
+                    .as_ref()
+                    .map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
             })
             .collect())
     }
@@ -140,6 +152,6 @@ impl McpServerConnection for SseMcpConnection {
         self.client
             .send_request(ClientRequest::PingRequest(PingRequest::default()))
             .await?;
-        Ok(())        
+        Ok(())
     }
 }

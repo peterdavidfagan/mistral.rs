@@ -1,13 +1,16 @@
 use crate::client::McpServerConnection;
 
-use rmcp::{
-    ServiceExt,
-    model::{CallToolRequestParam, ClientCapabilities, ClientInfo, ClientRequest, Implementation, PingRequest, ReadResourceRequestParam, Tool as McpSdkTool},
-    transport::{StreamableHttpClientTransport},
-};
 use rmcp::transport::common::client_side_sse::ExponentialBackoff;
+use rmcp::{
+    model::{
+        CallToolRequestParam, ClientCapabilities, ClientInfo, ClientRequest, Implementation,
+        PingRequest, ReadResourceRequestParam, Tool as McpSdkTool,
+    },
+    transport::StreamableHttpClientTransport,
+    ServiceExt,
+};
 
-use crate::{McpToolInfo};
+use crate::McpToolInfo;
 use anyhow::Result;
 use rust_mcp_schema::Resource;
 use serde_json::Value;
@@ -16,15 +19,16 @@ use std::time::Duration;
 
 /// Streamable HTTP MCP server connection using rmcp SDK
 pub struct StreamableHttpMcpConnection {
-    client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
+    client:
+        Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>>,
     server_id: String,
     server_name: String,
 }
 
 impl StreamableHttpMcpConnection {
     pub async fn new(
-        server_id: String, 
-        server_name: String, 
+        server_id: String,
+        server_name: String,
         uri: String,
         max_times: Option<usize>,
         base_duration: Option<Duration>,
@@ -41,7 +45,8 @@ impl StreamableHttpMcpConnection {
             channel_buffer_capacity: channel_buffer_capacity.unwrap_or(100),
             allow_stateless: allow_stateless.unwrap_or(true),
         };
-        let transport = StreamableHttpClientTransport::with_client(reqwest::Client::default(), config);
+        let transport =
+            StreamableHttpClientTransport::with_client(reqwest::Client::default(), config);
         let client_info = ClientInfo {
             protocol_version: Default::default(),
             capabilities: ClientCapabilities::default(),
@@ -50,7 +55,9 @@ impl StreamableHttpMcpConnection {
                 version: "0.0.1".to_string(),
             },
         };
-        let client: Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>> = Arc::new(client_info.serve(transport).await?);
+        let client: Arc<
+            rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::InitializeRequestParam>,
+        > = Arc::new(client_info.serve(transport).await?);
 
         Ok(Self {
             client,
@@ -73,13 +80,17 @@ impl McpServerConnection for StreamableHttpMcpConnection {
         let tools: Vec<McpSdkTool> = result.tools;
         Ok(tools
             .into_iter()
-           .map(|t| McpToolInfo {
+            .map(|t| McpToolInfo {
                 name: t.name.to_string(),
                 description: t.description.as_ref().map(|c| c.to_string()),
                 input_schema: serde_json::Value::Object((*t.input_schema).clone()),
                 server_id: self.server_id.clone(),
                 server_name: self.server_name.clone(),
-                annotations: t.annotations.as_ref().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),            })
+                annotations: t
+                    .annotations
+                    .as_ref()
+                    .map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
+            })
             .collect())
     }
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
@@ -130,6 +141,6 @@ impl McpServerConnection for StreamableHttpMcpConnection {
         self.client
             .send_request(ClientRequest::PingRequest(PingRequest::default()))
             .await?;
-        Ok(())       
+        Ok(())
     }
 }

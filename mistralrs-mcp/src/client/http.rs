@@ -2,13 +2,12 @@ use crate::client::McpServerConnection;
 
 use crate::transport::{HttpTransport, McpTransport};
 use crate::types::McpToolResult;
-use crate::{McpToolInfo};
+use crate::McpToolInfo;
 use anyhow::Result;
 use rust_mcp_schema::Resource;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-
 
 /// HTTP-based MCP server connection
 pub struct HttpMcpConnection {
