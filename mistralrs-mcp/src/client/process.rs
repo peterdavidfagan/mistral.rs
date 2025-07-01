@@ -2,7 +2,7 @@ use crate::client::McpServerConnection;
 
 use crate::transport::{McpTransport, ProcessTransport};
 use crate::types::McpToolResult;
-use crate::{McpToolInfo};
+use crate::McpToolInfo;
 use anyhow::Result;
 use rust_mcp_schema::Resource;
 use serde_json::Value;
